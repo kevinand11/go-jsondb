@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 
 	"github.com/jcelliott/lumber"
@@ -108,32 +109,49 @@ func (c *collection) Write (resource string, v interface {}) error {
 	return os.Rename(tmpPath, filePath)
 }
 
-func (c *collection) Read (resource string) (string, error) {
-	if resource == "" { return "", fmt.Errorf("missing resource") }
+func (c *collection) Read (resource string, r any) error {
+	if resource == "" { return fmt.Errorf("missing resource") }
 
 	filePath := filepath.Join(c.path(), resource)
-	if _, err := stat(filePath); err != nil { return "", err }
+	if _, err := stat(filePath); err != nil { return err }
 
 	b, err := os.ReadFile(filePath + ".json")
-	if err != nil { return "", err }
+	if err != nil { return err }
 
-	return string(b), nil
+	return json.Unmarshal(b, &r)
 }
 
-func (c *collection) ReadAll () (records []string, err error) {
+func (c *collection) ReadAll (r any) error {
 	dir := c.path()
-	if _, err := stat(dir); err != nil { return records, err }
+	if _, err := stat(dir); err != nil { return err }
 
 	files, _ := os.ReadDir(dir)
 
-	for _, file := range files {
-		b, err := os.ReadFile(filepath.Join(dir, file.Name()))
-		if err != nil { return records, err }
+	resultsVal := reflect.ValueOf(r)
+	if resultsVal.Kind() != reflect.Ptr { return fmt.Errorf("results argument must be a pointer to a slice") }
+	sliceVal := resultsVal.Elem()
+	if sliceVal.Kind() == reflect.Interface { sliceVal = sliceVal.Elem() }
+	if sliceVal.Kind() != reflect.Slice { return fmt.Errorf("results argument must be a pointer to a slice") }
+	elementType := sliceVal.Type().Elem()
 
-		records = append(records, string(b))
+	for index, file := range files {
+		b, err := os.ReadFile(filepath.Join(dir, file.Name()))
+		if err != nil { return err }
+
+		if sliceVal.Len() == index {
+			// slice is full
+			newElem := reflect.New(elementType)
+			sliceVal = reflect.Append(sliceVal, newElem.Elem())
+			sliceVal = sliceVal.Slice(0, sliceVal.Cap())
+		}
+
+		currElem := sliceVal.Index(index).Addr().Interface()
+		if err = json.Unmarshal(b, currElem); err != nil { return err }
 	}
 
-	return records, err
+	resultsVal.Elem().Set(sliceVal.Slice(0, len(files)))
+
+	return nil
 }
 
 func (c *collection) Delete (resource string) error {
@@ -165,22 +183,4 @@ func (c *collection) getOrCreateMutex () *sync.Mutex {
 	}
 
 	return m
-}
-
-func ParseOne[K interface {}] (r string, v K) (K, error) {
-	rec := new(K)
-	err := json.Unmarshal([]byte(r), &rec)
-	if err != nil { return *rec, fmt.Errorf("error %v", err) }
-	return *rec, nil
-}
-
-func ParseMany[K interface {}] (data []string, v K) ([]K, error) {
-	records := make([]K, len(data))
-	for idx, record := range data {
-		rec := new(K)
-		err := json.Unmarshal([]byte(record), &rec)
-		if err != nil { return nil, fmt.Errorf("error %v", err) }
-		records[idx] = *rec
-	}
-	return records, nil
 }

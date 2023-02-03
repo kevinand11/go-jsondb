@@ -35,17 +35,13 @@ func main () {
         col.Write(employee.Name, employee)
 	}
 
-	record, err := col.Read(employees[0].Name)
-	if (err != nil) { fmt.Println("Error", err) }
-	fmt.Println()
-	user, err := database.ParseOne(record, User {})
+	user := User {}
+	err = col.Read(employees[0].Name, &user)
 	if (err != nil) { fmt.Println("Error", err) }
 	fmt.Println(user)
 
-	records, err := col.ReadAll()
-	if (err != nil) { fmt.Println("Error", err) }
-	fmt.Println()
-	allUsers, err := database.ParseMany(records, User {})
+	allUsers := [] User {}
+	err = col.ReadAll(&allUsers)
 	if (err != nil) { fmt.Println("Error", err) }
 	fmt.Println(allUsers)
 
